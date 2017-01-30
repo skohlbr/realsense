@@ -708,6 +708,8 @@ namespace realsense_camera
     camera_info->P.at(10) = 1;
     camera_info->P.at(11) = 0;
 
+    camera_info->distortion_model = "plumb_bob";
+
     if (stream_index == RS_STREAM_DEPTH)
     {
       // set depth to color translation values in Projection matrix (P)
@@ -721,20 +723,31 @@ namespace realsense_camera
       camera_info->P.at(3) = z_extrinsic.translation[0];     // Tx
       camera_info->P.at(7) = z_extrinsic.translation[1];     // Ty
       camera_info->P.at(11) = z_extrinsic.translation[2];    // Tz
+
+      // set R (rotation matrix) values to retrieved extrinsic matrix
+      camera_info->R.at(0) = z_extrinsic.rotation[0];
+      camera_info->R.at(1) = z_extrinsic.rotation[3];
+      camera_info->R.at(2) = z_extrinsic.rotation[6];
+      camera_info->R.at(3) = z_extrinsic.rotation[1];
+      camera_info->R.at(4) = z_extrinsic.rotation[4];
+      camera_info->R.at(5) = z_extrinsic.rotation[7];
+      camera_info->R.at(6) = z_extrinsic.rotation[2];
+      camera_info->R.at(7) = z_extrinsic.rotation[5];
+      camera_info->R.at(8) = z_extrinsic.rotation[8];
+
+    }else{
+
+      // set R (rotation matrix) values to identity matrix
+      camera_info->R.at(0) = 1.0;
+      camera_info->R.at(1) = 0.0;
+      camera_info->R.at(2) = 0.0;
+      camera_info->R.at(3) = 0.0;
+      camera_info->R.at(4) = 1.0;
+      camera_info->R.at(5) = 0.0;
+      camera_info->R.at(6) = 0.0;
+      camera_info->R.at(7) = 0.0;
+      camera_info->R.at(8) = 1.0;
     }
-
-    camera_info->distortion_model = "plumb_bob";
-
-    // set R (rotation matrix) values to identity matrix
-    camera_info->R.at(0) = 1.0;
-    camera_info->R.at(1) = 0.0;
-    camera_info->R.at(2) = 0.0;
-    camera_info->R.at(3) = 0.0;
-    camera_info->R.at(4) = 1.0;
-    camera_info->R.at(5) = 0.0;
-    camera_info->R.at(6) = 0.0;
-    camera_info->R.at(7) = 0.0;
-    camera_info->R.at(8) = 1.0;
 
     for (int i = 0; i < 5; i++)
     {
