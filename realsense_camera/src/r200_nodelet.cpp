@@ -1,5 +1,5 @@
 /******************************************************************************
- Copyright (c) 2016, Intel Corporation
+ Copyright (c) 2017, Intel Corporation
  All rights reserved.
 
  Redistribution and use in source and binary forms, with or without
@@ -66,7 +66,7 @@ namespace realsense_camera
 
     max_z_ = R200_MAX_Z;
 
-    BaseNodelet::onInit();
+    SyncNodelet::onInit();
   }
 
   /*
@@ -273,6 +273,12 @@ namespace realsense_camera
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_HUE, config.color_hue, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_SATURATION, config.color_saturation, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_SHARPNESS, config.color_sharpness, 0);
+    rs_set_device_option(rs_device_, RS_OPTION_COLOR_ENABLE_AUTO_EXPOSURE,
+    config.color_enable_auto_exposure, 0);
+    if (config.color_enable_auto_exposure == 0)
+    {
+      rs_set_device_option(rs_device_, RS_OPTION_COLOR_EXPOSURE, config.color_exposure, 0);
+    }
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_ENABLE_AUTO_WHITE_BALANCE,
         config.color_enable_auto_white_balance, 0);
     if (config.color_enable_auto_white_balance == 0)
@@ -284,10 +290,10 @@ namespace realsense_camera
     rs_set_device_option(rs_device_, RS_OPTION_R200_LR_AUTO_EXPOSURE_ENABLED, config.r200_lr_auto_exposure_enabled, 0);
     if (config.r200_lr_auto_exposure_enabled == 0)
     {
+      rs_set_device_option(rs_device_, RS_OPTION_R200_LR_GAIN, config.r200_lr_gain, 0);
       rs_set_device_option(rs_device_, RS_OPTION_R200_LR_EXPOSURE, config.r200_lr_exposure, 0);
     }
-    rs_set_device_option(rs_device_, RS_OPTION_R200_LR_GAIN, config.r200_lr_gain, 0);
-    rs_set_device_option(rs_device_, RS_OPTION_R200_EMITTER_ENABLED, config.r200_emitter_enabled, 0);
+
     if (config.r200_lr_auto_exposure_enabled == 1)
     {
       if (config.r200_auto_exposure_top_edge >= height_[RS_STREAM_DEPTH])
@@ -313,6 +319,8 @@ namespace realsense_camera
       edge_values_[3] = config.r200_auto_exposure_bottom_edge;
       rs_set_device_options(rs_device_, edge_options_, 4, edge_values_, 0);
     }
+
+    rs_set_device_option(rs_device_, RS_OPTION_R200_EMITTER_ENABLED, config.r200_emitter_enabled, 0);
 
     // Depth Control Group Settings
     // NOTE: do NOT use the config.groups values as they are zero the first time called
@@ -418,23 +426,6 @@ namespace realsense_camera
   }
 
   /*
-  * Set up the callbacks for the camera streams
-  */
-  void R200Nodelet::setFrameCallbacks()
-  {
-    // call base nodelet method
-    BaseNodelet::setFrameCallbacks();
-
-    ir2_frame_handler_ = [&](rs::frame  frame)  // NOLINT(build/c++11)
-    {
-      publishTopic(RS_STREAM_INFRARED2, frame);
-    };
-
-    rs_set_frame_callback_cpp(rs_device_, RS_STREAM_INFRARED2, new rs::frame_callback(ir2_frame_handler_), &rs_error_);
-    checkError();
-  }
-
-  /*
    * Get the camera extrinsics
    */
   void R200Nodelet::getCameraExtrinsics()
@@ -475,7 +466,7 @@ namespace realsense_camera
     static_tf_broadcaster_.sendTransform(b2i_msg);
 
     // Transform infrared2 frame to infrared2 optical frame
-    q_i2io.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q_i2io.setRPY(-M_PI/2, 0.0, -M_PI/2);
     i2io_msg.header.stamp = transform_ts_;
     i2io_msg.header.frame_id = frame_id_[RS_STREAM_INFRARED2];
     i2io_msg.child_frame_id = optical_frame_id_[RS_STREAM_INFRARED2];
@@ -510,7 +501,7 @@ namespace realsense_camera
 
     // Transform infrared2 frame to infrared2 optical frame
     tr.setOrigin(tf::Vector3(0, 0, 0));
-    q.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q.setRPY(-M_PI/2, 0.0, -M_PI/2);
     tr.setRotation(q);
     dynamic_tf_broadcaster_.sendTransform(tf::StampedTransform(tr, transform_ts_,
           frame_id_[RS_STREAM_INFRARED2], optical_frame_id_[RS_STREAM_INFRARED2]));

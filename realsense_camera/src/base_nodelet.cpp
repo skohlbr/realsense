@@ -1,5 +1,5 @@
 /******************************************************************************
- Copyright (c) 2016, Intel Corporation
+ Copyright (c) 2017, Intel Corporation
  All rights reserved.
 
  Redistribution and use in source and binary forms, with or without
@@ -49,31 +49,42 @@ namespace realsense_camera
    */
   BaseNodelet::~BaseNodelet()
   {
-    if (enable_tf_ == true && enable_tf_dynamic_ == true)
+    try
     {
-      transform_thread_->join();
+      if (enable_tf_ == true && enable_tf_dynamic_ == true)
+      {
+        transform_thread_->join();
+      }
+
+      stopCamera();
+
+      if (rs_context_)
+      {
+        rs_delete_context(rs_context_, &rs_error_);
+        rs_context_ = NULL;
+        checkError();
+      }
+
+      // Kill all old system progress groups
+      while (!system_proc_groups_.empty())
+      {
+        killpg(system_proc_groups_.front(), SIGHUP);
+        system_proc_groups_.pop();
+      }
+
+      ROS_INFO_STREAM(nodelet_name_ << " - Stopping...");
+      if (!ros::isShuttingDown())
+      {
+        ros::shutdown();
+      }
     }
-
-    stopCamera();
-
-    if (rs_context_)
+    catch(const std::exception& ex)
     {
-      rs_delete_context(rs_context_, &rs_error_);
-      rs_context_ = NULL;
-      checkError();
+        ROS_ERROR_STREAM(ex.what());
     }
-
-    // Kill all old system progress groups
-    while (!system_proc_groups_.empty())
+    catch(...)
     {
-      killpg(system_proc_groups_.front(), SIGHUP);
-      system_proc_groups_.pop();
-    }
-
-    ROS_INFO_STREAM(nodelet_name_ << " - Stopping...");
-    if (!ros::isShuttingDown())
-    {
-      ros::shutdown();
+        ROS_ERROR_STREAM("Unknown exception has occured!");
     }
   }
 
@@ -137,7 +148,7 @@ namespace realsense_camera
   }
   catch(...)
   {
-    ROS_ERROR_STREAM(nodelet_name_ << " - Caught unknown expection...shutting down!");
+    ROS_ERROR_STREAM(nodelet_name_ << " - Caught unknown exception...shutting down!");
     ros::shutdown();
   }
 
@@ -159,6 +170,7 @@ namespace realsense_camera
     pnh_.param("enable_pointcloud", enable_pointcloud_, ENABLE_PC);
     pnh_.param("enable_tf", enable_tf_, ENABLE_TF);
     pnh_.param("enable_tf_dynamic", enable_tf_dynamic_, ENABLE_TF_DYNAMIC);
+    pnh_.param("tf_publication_rate", tf_publication_rate_, TF_PUBLICATION_RATE);
     pnh_.param("depth_width", width_[RS_STREAM_DEPTH], DEPTH_WIDTH);
     pnh_.param("depth_height", height_[RS_STREAM_DEPTH], DEPTH_HEIGHT);
     pnh_.param("color_width", width_[RS_STREAM_COLOR], COLOR_WIDTH);
@@ -456,7 +468,8 @@ namespace realsense_camera
 
     if (req.power_on == true)
     {
-      ROS_INFO_STREAM(nodelet_name_ << " - " << startCamera());
+      start_camera_ = true;
+      start_stop_srv_called_ = true;
     }
     else
     {
@@ -468,7 +481,8 @@ namespace realsense_camera
       {
         if (checkForSubscriber() == false)
         {
-          ROS_INFO_STREAM(nodelet_name_ << " - " << stopCamera());
+          start_camera_ = false;
+          start_stop_srv_called_ = true;
         }
         else
         {
@@ -478,8 +492,7 @@ namespace realsense_camera
       }
     }
     return res.success;
-  }
-
+}
 
   /*
    * Force Power Camera service
@@ -487,14 +500,8 @@ namespace realsense_camera
   bool BaseNodelet::forcePowerCameraService(realsense_camera::ForcePower::Request & req,
       realsense_camera::ForcePower::Response & res)
   {
-    if (req.power_on == true)
-    {
-      ROS_INFO_STREAM(nodelet_name_ << " - " << startCamera());
-    }
-    else
-    {
-      ROS_INFO_STREAM(nodelet_name_ << " - " << stopCamera());
-    }
+    start_camera_ = req.power_on;
+    start_stop_srv_called_ = true;
     return true;
   }
 
@@ -568,7 +575,7 @@ namespace realsense_camera
           {
             opt_val = val;
           }
-          ROS_DEBUG_STREAM(nodelet_name_ << " - " << opt_name << " = " << opt_val);
+          ROS_INFO_STREAM(nodelet_name_ << " - Setting camera option " << opt_name << " = " << opt_val);
           rs_set_device_option(rs_device_, o.opt, opt_val, &rs_error_);
           checkError();
         }
@@ -865,17 +872,10 @@ namespace realsense_camera
     {
       enable_[RS_STREAM_DEPTH] = true;
     }
-
-    if (enable_[RS_STREAM_DEPTH] != rs_is_stream_enabled(rs_device_, RS_STREAM_DEPTH, 0))
-    {
-      stopCamera();
-      setStreams();
-      startCamera();
-    }
   }
 
   /*
-   * Determine the timetamp for the publish topic.
+   * Determine the timestamp for the publish topic.
    */
   ros::Time BaseNodelet::getTimestamp(rs_stream stream_index, double frame_ts)
   {
@@ -927,7 +927,7 @@ namespace realsense_camera
   }
   catch(...)
   {
-    ROS_ERROR_STREAM(nodelet_name_ << " - Caught unknown expection...shutting down!");
+    ROS_ERROR_STREAM(nodelet_name_ << " - Caught unknown exception...shutting down!");
     ros::shutdown();
   }
 
@@ -1103,7 +1103,7 @@ namespace realsense_camera
     static_tf_broadcaster_.sendTransform(b2c_msg);
 
     // Transform color frame to color optical frame
-    q_c2co.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q_c2co.setRPY(-M_PI/2, 0.0, -M_PI/2);
     c2co_msg.header.stamp = transform_ts_;
     c2co_msg.header.frame_id = frame_id_[RS_STREAM_COLOR];
     c2co_msg.child_frame_id = optical_frame_id_[RS_STREAM_COLOR];
@@ -1130,7 +1130,7 @@ namespace realsense_camera
     static_tf_broadcaster_.sendTransform(b2d_msg);
 
     // Transform depth frame to depth optical frame
-    q_d2do.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q_d2do.setRPY(-M_PI/2, 0.0, -M_PI/2);
     d2do_msg.header.stamp = transform_ts_;
     d2do_msg.header.frame_id = frame_id_[RS_STREAM_DEPTH];
     d2do_msg.child_frame_id = optical_frame_id_[RS_STREAM_DEPTH];
@@ -1157,7 +1157,7 @@ namespace realsense_camera
     static_tf_broadcaster_.sendTransform(b2i_msg);
 
     // Transform infrared frame to infrared optical frame
-    q_i2io.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q_i2io.setRPY(-M_PI/2, 0.0, -M_PI/2);
     i2io_msg.header.stamp = transform_ts_;
     i2io_msg.header.frame_id = frame_id_[RS_STREAM_INFRARED];
     i2io_msg.child_frame_id = optical_frame_id_[RS_STREAM_INFRARED];
@@ -1188,7 +1188,7 @@ namespace realsense_camera
 
     // Transform color frame to color optical frame
     tr.setOrigin(tf::Vector3(0, 0, 0));
-    q.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q.setRPY(-M_PI/2, 0.0, -M_PI/2);
     tr.setRotation(q);
     dynamic_tf_broadcaster_.sendTransform(tf::StampedTransform(tr, transform_ts_,
           frame_id_[RS_STREAM_COLOR], optical_frame_id_[RS_STREAM_COLOR]));
@@ -1204,7 +1204,7 @@ namespace realsense_camera
 
     // Transform depth frame to depth optical frame
     tr.setOrigin(tf::Vector3(0, 0, 0));
-    q.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q.setRPY(-M_PI/2, 0.0, -M_PI/2);
     tr.setRotation(q);
     dynamic_tf_broadcaster_.sendTransform(tf::StampedTransform(tr, transform_ts_,
           frame_id_[RS_STREAM_DEPTH], optical_frame_id_[RS_STREAM_DEPTH]));
@@ -1220,7 +1220,7 @@ namespace realsense_camera
 
     // Transform infrared frame to infrared optical frame
     tr.setOrigin(tf::Vector3(0, 0, 0));
-    q.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q.setRPY(-M_PI/2, 0.0, -M_PI/2);
     tr.setRotation(q);
     dynamic_tf_broadcaster_.sendTransform(tf::StampedTransform(tr, transform_ts_,
           frame_id_[RS_STREAM_INFRARED], optical_frame_id_[RS_STREAM_INFRARED]));
@@ -1234,7 +1234,7 @@ namespace realsense_camera
     // Publish transforms for the cameras
     ROS_INFO_STREAM(nodelet_name_ << " - Publishing camera transforms (/tf)");
 
-    ros::Rate loop_rate(1);
+    ros::Rate loop_rate(tf_publication_rate_);
 
     while (ros::ok())
     {
@@ -1262,7 +1262,7 @@ namespace realsense_camera
     }
   }
 
-  void BaseNodelet::wrappedSystem(std::vector<std::string> string_argv)
+  void BaseNodelet::wrappedSystem(const std::vector<std::string>& string_argv)
   {
     pid_t pid;
 
@@ -1311,16 +1311,33 @@ namespace realsense_camera
     }
   }
 
-  std::string BaseNodelet::checkFirmwareValidation(std::string fw_type, std::string current_fw, std::string camera_name,
-        std::string camera_serial_number)
+  std::string BaseNodelet::checkFirmwareValidation(const std::string& fw_type,
+                                                   const std::string& current_fw,
+                                                   const std::string& camera_name,
+                                                   const std::string& camera_serial_number)
   {
-    std::string validated_firmware = CAMERA_NAME_TO_VALIDATED_FIRMWARE.find(camera_name + "_" + fw_type)->second;
-    std::string warning_msg = "";
-    if (current_fw != validated_firmware)
+    for (auto& elem : CAMERA_NAME_TO_VALIDATED_FIRMWARE)
     {
-      warning_msg = camera_serial_number + "'s current " + fw_type + " firmware is " + current_fw +
-            ", Validated " + fw_type + " firmware is " + validated_firmware;
+        std::cout << elem.first << " ; " << elem.second << std::endl;
     }
+
+    std::string warning_msg = "";
+    std::string cam_name = camera_name + "_" + fw_type;
+    auto it = CAMERA_NAME_TO_VALIDATED_FIRMWARE.find(cam_name);
+    if (it == CAMERA_NAME_TO_VALIDATED_FIRMWARE.end())
+    {
+        warning_msg = "Camera " + cam_name + " not found!";
+    }
+    else
+    {
+        std::string validated_firmware = it->second;
+        if (current_fw != validated_firmware)
+        {
+            warning_msg = camera_serial_number + "'s current " + fw_type + " firmware is " + current_fw +
+                    ", Validated " + fw_type + " firmware is " + validated_firmware;
+        }
+    }
+
     return warning_msg;
   }
 

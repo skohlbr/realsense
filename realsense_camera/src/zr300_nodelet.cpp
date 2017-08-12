@@ -1,5 +1,5 @@
 /******************************************************************************
- Copyright (c) 2016, Intel Corporation
+ Copyright (c) 2017, Intel Corporation
  All rights reserved.
 
  Redistribution and use in source and binary forms, with or without
@@ -370,25 +370,31 @@ namespace realsense_camera
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_BACKLIGHT_COMPENSATION, config.color_backlight_compensation, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_BRIGHTNESS, config.color_brightness, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_CONTRAST, config.color_contrast, 0);
-    rs_set_device_option(rs_device_, RS_OPTION_COLOR_EXPOSURE, config.color_exposure, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_GAIN, config.color_gain, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_GAMMA, config.color_gamma, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_HUE, config.color_hue, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_SATURATION, config.color_saturation, 0);
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_SHARPNESS, config.color_sharpness, 0);
+    rs_set_device_option(rs_device_, RS_OPTION_COLOR_ENABLE_AUTO_EXPOSURE, config.color_enable_auto_exposure, 0);
+    if (config.color_enable_auto_exposure == 0)
+    {
+      rs_set_device_option(rs_device_, RS_OPTION_COLOR_EXPOSURE, config.color_exposure, 0);
+    }
     rs_set_device_option(rs_device_, RS_OPTION_COLOR_ENABLE_AUTO_WHITE_BALANCE,
         config.color_enable_auto_white_balance, 0);
     if (config.color_enable_auto_white_balance == 0)
     {
       rs_set_device_option(rs_device_, RS_OPTION_COLOR_WHITE_BALANCE, config.color_white_balance, 0);
     }
-    rs_set_device_option(rs_device_, RS_OPTION_COLOR_ENABLE_AUTO_EXPOSURE, config.color_enable_auto_exposure, 0);
+
+    // Set R200 specific options
     rs_set_device_option(rs_device_, RS_OPTION_R200_LR_AUTO_EXPOSURE_ENABLED, config.r200_lr_auto_exposure_enabled, 0);
     if (config.r200_lr_auto_exposure_enabled == 0)
     {
+      rs_set_device_option(rs_device_, RS_OPTION_R200_LR_GAIN, config.r200_lr_gain, 0);
       rs_set_device_option(rs_device_, RS_OPTION_R200_LR_EXPOSURE, config.r200_lr_exposure, 0);
     }
-    rs_set_device_option(rs_device_, RS_OPTION_R200_LR_GAIN, config.r200_lr_gain, 0);
+
     rs_set_device_option(rs_device_, RS_OPTION_R200_EMITTER_ENABLED, config.r200_emitter_enabled, 0);
     rs_set_device_option(rs_device_, RS_OPTION_R200_DEPTH_CLAMP_MIN, config.r200_depth_clamp_min, 0);
     rs_set_device_option(rs_device_, RS_OPTION_R200_DEPTH_CLAMP_MAX, config.r200_depth_clamp_max, 0);
@@ -498,8 +504,6 @@ namespace realsense_camera
     rs_set_device_option(rs_device_, RS_OPTION_FISHEYE_EXPOSURE,
         config.fisheye_exposure, 0);
     rs_set_device_option(rs_device_, RS_OPTION_FISHEYE_GAIN, config.fisheye_gain, 0);
-    rs_set_device_option(rs_device_, RS_OPTION_FISHEYE_STROBE, config.fisheye_strobe, 0);
-    rs_set_device_option(rs_device_, RS_OPTION_FISHEYE_EXTERNAL_TRIGGER, config.fisheye_external_trigger, 0);
     rs_set_device_option(rs_device_, RS_OPTION_FISHEYE_ENABLE_AUTO_EXPOSURE, config.fisheye_enable_auto_exposure, 0);
     rs_set_device_option(rs_device_, RS_OPTION_FISHEYE_AUTO_EXPOSURE_MODE, config.fisheye_auto_exposure_mode, 0);
     rs_set_device_option(rs_device_, RS_OPTION_FISHEYE_AUTO_EXPOSURE_ANTIFLICKER_RATE,
@@ -520,6 +524,26 @@ namespace realsense_camera
     prev_imu_ts_ = -1;
     while (ros::ok())
     {
+      if (start_stop_srv_called_ == true)
+      {
+        if (start_camera_ == true)
+        {
+          ROS_INFO_STREAM(nodelet_name_ << " - " << startCamera());
+        }
+        else
+        {
+          ROS_INFO_STREAM(nodelet_name_ << " - " << stopCamera());
+        }
+        start_stop_srv_called_ = false;
+      }
+
+      if (enable_[RS_STREAM_DEPTH] != rs_is_stream_enabled(rs_device_, RS_STREAM_DEPTH, 0))
+      {
+        stopCamera();
+        setStreams();
+        startCamera();
+      }
+
       if (imu_publisher_.getNumSubscribers() > 0)
       {
         std::unique_lock<std::mutex> lock(imu_mutex_);
@@ -530,25 +554,11 @@ namespace realsense_camera
           imu_msg.header.stamp = ros::Time(camera_start_ts_) + ros::Duration(imu_ts_ * 0.001);
           imu_msg.header.frame_id = imu_optical_frame_id_;
 
-          imu_msg.orientation.x = 0.0;
-          imu_msg.orientation.y = 0.0;
-          imu_msg.orientation.z = 0.0;
-          imu_msg.orientation.w = 0.0;
-          imu_msg.orientation_covariance = {-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+          // Setting just the first element to -1.0 because device does not give orientation data
+          imu_msg.orientation_covariance[0] = -1.0;
 
-          imu_msg.angular_velocity.x = imu_angular_vel_[0];
-          imu_msg.angular_velocity.y = imu_angular_vel_[1];
-          imu_msg.angular_velocity.z = imu_angular_vel_[2];
-
-          imu_msg.linear_acceleration.x = imu_linear_accel_[0];
-          imu_msg.linear_acceleration.y = imu_linear_accel_[1];
-          imu_msg.linear_acceleration.z = imu_linear_accel_[2];
-
-          for (int i = 0; i < 9; ++i)
-          {
-            imu_msg.angular_velocity_covariance[i] = imu_angular_vel_cov_[i];
-            imu_msg.linear_acceleration_covariance[i] = imu_linear_accel_cov_[i];
-          }
+          imu_msg.angular_velocity = imu_angular_vel_;
+          imu_msg.linear_acceleration = imu_linear_accel_;
 
           imu_publisher_.publish(imu_msg);
           prev_imu_ts_ = imu_ts_;
@@ -589,23 +599,15 @@ namespace realsense_camera
 
       if (entry.timestamp_data.source_id == RS_EVENT_IMU_GYRO)
       {
-        for (int i = 0; i < 3; ++i)
-        {
-          imu_angular_vel_[i] = entry.axes[i];
-          imu_linear_accel_[i] = 0.0;
-        }
-        imu_angular_vel_cov_[0] = 0.0;
-        imu_linear_accel_cov_[0] = -1.0;
+        imu_angular_vel_.x = entry.axes[0];
+        imu_angular_vel_.y = entry.axes[1];
+        imu_angular_vel_.z = entry.axes[2];
       }
       else if (entry.timestamp_data.source_id == RS_EVENT_IMU_ACCEL)
       {
-        for (int i = 0; i < 3; ++i)
-        {
-          imu_angular_vel_[i] = 0.0;
-          imu_linear_accel_[i] = entry.axes[i];
-        }
-        imu_angular_vel_cov_[0] = -1.0;
-        imu_linear_accel_cov_[0] = 0.0;
+        imu_linear_accel_.x = entry.axes[0];
+        imu_linear_accel_.y = entry.axes[1];
+        imu_linear_accel_.z = entry.axes[2];
       }
       imu_ts_ = static_cast<double>(entry.timestamp_data.timestamp);
 
@@ -728,7 +730,7 @@ namespace realsense_camera
     static_tf_broadcaster_.sendTransform(b2i_msg);
 
     // Transform infrared2 frame to infrared2 optical frame
-    q_i2io.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q_i2io.setRPY(-M_PI/2, 0.0, -M_PI/2);
     i2io_msg.header.stamp = transform_ts_;
     i2io_msg.header.frame_id = frame_id_[RS_STREAM_INFRARED2];
     i2io_msg.child_frame_id = optical_frame_id_[RS_STREAM_INFRARED2];
@@ -755,7 +757,7 @@ namespace realsense_camera
     static_tf_broadcaster_.sendTransform(b2f_msg);
 
     // Transform fisheye frame to fisheye optical frame
-    q_f2fo.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q_f2fo.setRPY(-M_PI/2, 0.0, -M_PI/2);
     f2fo_msg.header.stamp = transform_ts_;
     f2fo_msg.header.frame_id = frame_id_[RS_STREAM_FISHEYE];
     f2fo_msg.child_frame_id = optical_frame_id_[RS_STREAM_FISHEYE];
@@ -782,7 +784,7 @@ namespace realsense_camera
     static_tf_broadcaster_.sendTransform(b2imu_msg);
 
     // Transform imu frame to imu optical frame
-    q_imu2imuo.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q_imu2imuo.setRPY(-M_PI/2, 0.0, -M_PI/2);
     imu2imuo_msg.header.stamp = transform_ts_;
     imu2imuo_msg.header.frame_id = imu_frame_id_;
     imu2imuo_msg.child_frame_id = imu_optical_frame_id_;
@@ -817,7 +819,7 @@ namespace realsense_camera
 
     // Transform infrared2 frame to infrared2 optical frame
     tr.setOrigin(tf::Vector3(0, 0, 0));
-    q.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q.setRPY(-M_PI/2, 0.0, -M_PI/2);
     tr.setRotation(q);
     dynamic_tf_broadcaster_.sendTransform(tf::StampedTransform(tr, transform_ts_,
           frame_id_[RS_STREAM_INFRARED2], optical_frame_id_[RS_STREAM_INFRARED2]));
@@ -833,7 +835,7 @@ namespace realsense_camera
 
     // Transform fisheye frame to fisheye optical frame
     tr.setOrigin(tf::Vector3(0, 0, 0));
-    q.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q.setRPY(-M_PI/2, 0.0, -M_PI/2);
     tr.setRotation(q);
     dynamic_tf_broadcaster_.sendTransform(tf::StampedTransform(tr, transform_ts_,
           frame_id_[RS_STREAM_FISHEYE], optical_frame_id_[RS_STREAM_FISHEYE]));
@@ -849,7 +851,7 @@ namespace realsense_camera
 
     // Transform imu frame to imu optical frame
     tr.setOrigin(tf::Vector3(0, 0, 0));
-    q.setEuler(M_PI/2, 0.0, -M_PI/2);
+    q.setRPY(-M_PI/2, 0.0, -M_PI/2);
     tr.setRotation(q);
     dynamic_tf_broadcaster_.sendTransform(tf::StampedTransform(tr, transform_ts_,
           imu_frame_id_, imu_optical_frame_id_));
