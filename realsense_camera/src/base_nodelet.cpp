@@ -605,6 +605,7 @@ namespace realsense_camera
     checkError();
 
     rs_set_frame_callback_cpp(rs_device_, RS_STREAM_COLOR, new rs::frame_callback(color_frame_handler_), &rs_error_);
+    //rs_set_frame_callback_cpp(rs_device_, RS_STREAM_RECTIFIED_COLOR, new rs::frame_callback(color_frame_handler_), &rs_error_);
     checkError();
 
     // Need to add this check due to a bug in librealsense which calls the IR callback
@@ -673,7 +674,14 @@ namespace realsense_camera
   void BaseNodelet::getStreamCalibData(rs_stream stream_index)
   {
     rs_intrinsics intrinsic;
-    rs_get_stream_intrinsics(rs_device_, stream_index, &intrinsic, &rs_error_);
+    //rs_get_stream_intrinsics(rs_device_, stream_index, &intrinsic, &rs_error_);
+
+
+    if(stream_index == RS_STREAM_COLOR)
+      rs_get_stream_intrinsics(rs_device_, RS_STREAM_RECTIFIED_COLOR, &intrinsic, &rs_error_);
+    else
+      rs_get_stream_intrinsics(rs_device_, stream_index, &intrinsic, &rs_error_);
+
     if (rs_error_)
     {
       ROS_ERROR_STREAM(nodelet_name_ << " - Verify camera firmware version and/or calibration data!");
@@ -824,6 +832,10 @@ namespace realsense_camera
         cvWrapper_.convertTo(image_[stream_index], cv_type_[stream_index],
             static_cast<double>(depth_scale_meters) / static_cast<double>(MILLIMETER_METERS));
       }
+    } else if (stream_index == RS_STREAM_COLOR)
+    {
+      //image_[stream_index].data = (unsigned char *) (rs_get_frame_data(rs_device_, RS_STREAM_RECTIFIED_COLOR, 0));
+      image_[stream_index].data = (unsigned char *) (frame.get_data());
     }
     else
     {

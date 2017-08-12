@@ -31,7 +31,7 @@
 
      <!-- "enable_pointcloud" is set to false by default because rgbd_launch uses standard ROS packages
           to generate point clouds. -->
-    <arg name="enable_pointcloud"   default="false" />
+    <arg name="enable_pointcloud"   default="true" />
 <!-- realsense_camera -->
 
     <node pkg="nodelet" type="nodelet" name="driver"
@@ -66,5 +66,6 @@
         <remap from="color"    to="$(arg rgb)" />
         <remap from="ir"       to="$(arg ir)" />
         <remap from="ir2"      to="$(arg ir2)" />
+        <remap from="depth/points"   to="points_native" />
     </node>
 </launch>
